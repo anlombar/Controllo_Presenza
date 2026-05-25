@@ -3,90 +3,135 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chiama Antonio</title>
+  <title>PWA Probe</title>
   <style>
-    html, body {
-      height: 100%; margin: 0; background: #0f172a; color: #fff;
+    body {
+      margin: 0; padding: 1rem;
       font-family: system-ui, sans-serif;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center; gap: 1rem;
+      background: #111; color: #eee;
+      font-size: 14px;
     }
-    button {
-      font-size: 1.75rem; padding: 1.25rem 2.5rem;
-      border: none; border-radius: 16px;
-      background: #148579; color: #fff;
+    h1 { font-size: 1.1rem; }
+    #log {
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 90vh;
+      overflow: auto;
     }
-    button:disabled { opacity: 0.5; }
-    #status { font-size: 0.9rem; opacity: 0.85; max-width: 90%; text-align: center; }
+    .ok { color: #6ee7b7; }
+    .err { color: #fca5a5; }
   </style>
 </head>
 <body>
-  <button id="callBtn" disabled>Chiama Antonio</button>
-  <div id="status">Connessione al codec...</div>
+  <h1>PWA Probe → Macro</h1>
+  <div id="log">Avvio...</div>
+
   <script>
-    function authSubProto(user, pass) {
-      return 'auth-' + btoa(user + ':' + pass)
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    var BRIDGE_WIDGET = 'pwa-probe-inbox';
+    var MAX_LEN = 240;
+    var logEl = document.getElementById('log');
+    var lines = [];
+
+    function uiLog(text, cls) {
+      lines.push(text);
+      logEl.textContent = lines.join('\n');
+      logEl.className = cls || '';
     }
-    function wsHost(ip) {
-      return ip.indexOf(':') >= 0 ? '[' + ip + ']' : ip;
+
+    function parseQuery() {
+      var out = {};
+      var q = location.search.replace(/^\?/, '');
+      if (!q) return out;
+      var pairs = q.split('&');
+      for (var i = 0; i < pairs.length; i++) {
+        var p = pairs[i].split('=');
+        var k = decodeURIComponent(p[0] || '');
+        var v = decodeURIComponent((p[1] || '').replace(/\+/g, ' '));
+        out[k] = v;
+      }
+      return out;
     }
-    function getAuth() {
-      var raw = location.hash.replace(/^#/, '');
-      if (!raw) throw new Error('Credenziali mancanti (hash URL assente)');
-      return JSON.parse(atob(raw));
+
+    function safeStringify(v) {
+      try {
+        if (typeof v === 'function') return '[function]';
+        if (v === null || v === undefined) return String(v);
+        if (typeof v === 'object') return JSON.stringify(v);
+        return String(v);
+      } catch (e) {
+        return '[unserializable]';
+      }
     }
-    function dial(ws, number) {
-      return new Promise(function (resolve, reject) {
-        var id = Date.now();
-        function onMessage(ev) {
-          var msg = JSON.parse(ev.data);
-          if (msg.id !== id) return;
-          ws.removeEventListener('message', onMessage);
-          if (msg.error) reject(new Error(msg.error.message || 'Dial fallito'));
-          else resolve(msg.result);
-        }
-        ws.addEventListener('message', onMessage);
-        ws.send(JSON.stringify({
-          jsonrpc: '2.0',
-          id: id,
-          method: 'xCommand/Dial',
-          params: { Number: number }
-        }));
+
+    function truncate(s) {
+      s = String(s);
+      return s.length > MAX_LEN ? s.substring(0, MAX_LEN) + '…' : s;
+    }
+
+    async function sendToMacro(xapi, key, value) {
+      var msg = 'PWA|' + key + '|' + truncate(value);
+      uiLog('→ macro: ' + msg);
+      await xapi.Command('UserInterface Extensions Widget SetValue', {
+        WidgetId: BRIDGE_WIDGET,
+        Value: msg,
       });
+      await delay(120);
     }
-    var statusEl = document.getElementById('status');
-    var btn = document.getElementById('callBtn');
-    try {
-      var auth = getAuth();
-      var sipUri = auth.sipUri || 'sip:antonio@tuouserver.it';
-      var ws = new WebSocket(
-        'wss://' + wsHost(auth.ipAddress) + '/ws',
-        authSubProto(auth.username, auth.password)
-      );
-      ws.onopen = function () {
-        statusEl.textContent = 'Pronto';
-        btn.disabled = false;
-      };
-      ws.onerror = function () {
-        statusEl.textContent = 'Errore WebSocket (verifica ApiKey e rete)';
-      };
-      ws.onclose = function () {
-        statusEl.textContent = 'WebSocket chiuso';
-        btn.disabled = true;
-      };
-      btn.onclick = function () {
-        btn.disabled = true;
-        statusEl.textContent = 'Chiamata in corso...';
-        dial(ws, sipUri)
-          .then(function () { statusEl.textContent = 'Chiamata avviata'; })
-          .catch(function (e) { statusEl.textContent = 'Errore: ' + e.message; })
-          .finally(function () { btn.disabled = false; });
-      };
-    } catch (e) {
-      statusEl.textContent = 'Errore: ' + e.message;
-      console.error(e);
+
+    function delay(ms) {
+      return new Promise(function (r) { setTimeout(r, ms); });
     }
-  </script>
-</body>
-</html>
+
+    async function collectVariables() {
+      var vars = [];
+
+      vars.push(['location.href', location.href]);
+      vars.push(['location.origin', location.origin]);
+      vars.push(['location.pathname', location.pathname]);
+      vars.push(['location.search', location.search]);
+      vars.push(['location.hash', location.hash]);
+      vars.push(['document.referrer', document.referrer || '']);
+      vars.push(['navigator.userAgent', navigator.userAgent]);
+      vars.push(['navigator.language', navigator.language]);
+
+      var qp = parseQuery();
+      for (var qk in qp) {
+        if (Object.prototype.hasOwnProperty.call(qp, qk)) {
+          vars.push(['query.' + qk, qp[qk]]);
+        }
+      }
+
+      vars.push(['window.getXAPI', typeof window.getXAPI]);
+      vars.push(['window.xapi', typeof window.xapi]);
+
+      var winKeys = Object.getOwnPropertyNames(window).sort();
+      for (var i = 0; i < winKeys.length; i++) {
+        var k = winKeys[i];
+        if (/xapi|webex|cisco|ce|jsx|macro|bridge/i.test(k)) {
+          vars.push(['window.' + k, typeof window[k]]);
+        }
+      }
+
+      return vars;
+    }
+
+    async function collectXapiStatus(xapi) {
+      var out = [];
+      var paths = [
+        ['Config.UserInterface.HomeScreen.Peripherals.WebApp.URL', function () {
+          return xapi.Config.UserInterface.HomeScreen.Peripherals.WebApp.URL.get();
+        }],
+        ['Status.SystemUnit.TouchPanel.Mode', function () {
+          return xapi.Status.SystemUnit.TouchPanel.Mode.get();
+        }],
+        ['Status.SystemUnit.ProductId', function () {
+          return xapi.Status.SystemUnit.ProductId.get();
+        }],
+        ['Status.SystemUnit.Software.Version', function () {
+          return xapi.Status.SystemUnit.Software.Version.get();
+        }],
+        ['Status.Network[1].IPv4.Address', function () {
+          return xapi.Status.Network[1].IPv4.Address.get();
+        }],
+        ['Status.RoomAnalytics.PeopleCount.Current', function () {
+         
