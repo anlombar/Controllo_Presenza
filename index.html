@@ -5,30 +5,78 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chiama Antonio</title>
   <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-      font-family: system-ui, sans-serif;
-      background: #0f172a;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    a {
-      display: inline-block;
-      font-size: 1.75rem;
-      font-weight: 600;
-      padding: 1.25rem 2.5rem;
-      border-radius: 16px;
-      background: #148579;
-      color: #fff;
-      text-decoration: none;
-      box-shadow: 0 8px 24px rgba(0,0,0,.35);
-    }
+    html, body { height:100%; margin:0; background:#0f172a; color:#fff;
+      font-family:system-ui,sans-serif; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:1rem; }
+    button { font-size:1.75rem; padding:1.25rem 2.5rem; border:none; border-radius:16px;
+      background:#148579; color:#fff; }
+    button:disabled { opacity:.5; }
+    #status { font-size:.9rem; opacity:.8; }
   </style>
 </head>
 <body>
-  <!-- Modifica con il tuo URI SIP reale -->
-  <a href="sip:anlombar@acecloud.webex.com">Chiama Antonio</a>
+  <button id="callBtn" disabled>Chiama Antonio</button>
+  <div id="status">Connessione al codec...</div>
+  <script>
+    const SIP_URI = 'sip:antonio@tuouserver.it';
+    function authSubProto(user, pass) {
+      return 'auth-' + btoa(user + ':' + pass)
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+    function getAuth() {
+      const raw = location.hash.replace(/^#/, '');
+      if (!raw) throw new Error('Hash credenziali mancante');
+      return JSON.parse(atob(raw));
+    }
+    function dial(ws, number) {
+      return new Promise((resolve, reject) => {
+        const id = Date.now();
+        const handler = (ev) => {
+          const msg = JSON.parse(ev.data);
+          if (msg.id !== id) return;
+          ws.removeEventListener('message', handler);
+          if (msg.error) reject(new Error(msg.error.message || 'Dial fallito'));
+          else resolve(msg.result);
+        };
+        ws.addEventListener('message', handler);
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          method: 'xCommand/Dial',
+          params: { Number: number },
+        }));
+      });
+    }
+    const statusEl = document.getElementById('status');
+    const btn = document.getElementById('callBtn');
+    try {
+      const { username, password, ipAddress } = getAuth();
+      const ws = new WebSocket(
+        'wss://' + ipAddress + '/ws',
+        authSubProto(username, password)
+      );
+      ws.onopen = () => {
+        statusEl.textContent = 'Pronto';
+        btn.disabled = false;
+      };
+      ws.onerror = () => {
+        statusEl.textContent = 'Errore WebSocket';
+      };
+      btn.onclick = async () => {
+        btn.disabled = true;
+        statusEl.textContent = 'Chiamata in corso...';
+        try {
+          await dial(ws, SIP_URI);
+          statusEl.textContent = 'Chiamata avviata';
+        } catch (e) {
+          statusEl.textContent = 'Errore: ' + e.message;
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    } catch (e) {
+      statusEl.textContent = 'Errore: ' + e.message;
+    }
+  </script>
 </body>
 </html>
