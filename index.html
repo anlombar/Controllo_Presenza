@@ -3,39 +3,49 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PWA Probe</title>
+  <title>PWA Probe v2</title>
   <style>
     body {
       margin: 0; padding: 1rem;
       font-family: system-ui, sans-serif;
-      background: #111; color: #eee;
-      font-size: 14px;
+      background: #0f172a; color: #e2e8f0;
+      font-size: 15px; line-height: 1.45;
     }
-    h1 { font-size: 1.1rem; }
+    h1 { font-size: 1.15rem; margin: 0 0 0.75rem; }
     #log {
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 90vh;
-      overflow: auto;
+      white-space: pre-wrap; word-break: break-word;
+      background: #1e293b; padding: 1rem; border-radius: 8px;
+      min-height: 200px;
     }
+    .step { color: #93c5fd; }
     .ok { color: #6ee7b7; }
+    .warn { color: #fcd34d; }
     .err { color: #fca5a5; }
   </style>
 </head>
 <body>
-  <h1>PWA Probe → Macro</h1>
-  <div id="log">Avvio...</div>
+  <h1>PWA Probe v2</h1>
+  <div id="log">[0] Boot...</div>
 
   <script>
     var BRIDGE_WIDGET = 'pwa-probe-inbox';
     var MAX_LEN = 240;
     var logEl = document.getElementById('log');
-    var lines = [];
+    var lines = ['[0] Boot...'];
 
-    function uiLog(text, cls) {
-      lines.push(text);
+    function log(msg, cls) {
+      var prefix = '[' + lines.length + '] ';
+      var line = prefix + msg;
+      lines.push(line);
       logEl.textContent = lines.join('\n');
       logEl.className = cls || '';
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function delay(ms) {
+      return new Promise(function (resolve) {
+        setTimeout(resolve, ms);
+      });
     }
 
     function parseQuery() {
@@ -44,94 +54,184 @@
       if (!q) return out;
       var pairs = q.split('&');
       for (var i = 0; i < pairs.length; i++) {
-        var p = pairs[i].split('=');
-        var k = decodeURIComponent(p[0] || '');
-        var v = decodeURIComponent((p[1] || '').replace(/\+/g, ' '));
-        out[k] = v;
+        var parts = pairs[i].split('=');
+        var k = decodeURIComponent(parts[0] || '');
+        var v = decodeURIComponent((parts[1] || '').replace(/\+/g, ' '));
+        if (k) out[k] = v;
       }
       return out;
     }
 
-    function safeStringify(v) {
+    function safeStr(v) {
       try {
         if (typeof v === 'function') return '[function]';
         if (v === null || v === undefined) return String(v);
         if (typeof v === 'object') return JSON.stringify(v);
         return String(v);
       } catch (e) {
-        return '[unserializable]';
+        return '[error stringify]';
       }
     }
 
     function truncate(s) {
       s = String(s);
-      return s.length > MAX_LEN ? s.substring(0, MAX_LEN) + '…' : s;
+      return s.length > MAX_LEN ? s.substring(0, MAX_LEN) + '...' : s;
+    }
+
+    function getXapiWithTimeout(ms) {
+      return new Promise(function (resolve, reject) {
+        if (typeof window.getXAPI !== 'function') {
+          reject(new Error('window.getXAPI non esiste (non sei in PWA RoomOS?)'));
+          return;
+        }
+        var done = false;
+        var timer = setTimeout(function () {
+          if (done) return;
+          done = true;
+          reject(new Error('getXAPI timeout dopo ' + ms + ' ms — controlla WebSocket ApiKey e AllowedHosts sul codec'));
+        }, ms);
+
+        Promise.resolve()
+          .then(function () { return window.getXAPI(); })
+          .then(function (xapi) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(xapi);
+          })
+          .catch(function (err) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            reject(err);
+          });
+      });
     }
 
     async function sendToMacro(xapi, key, value) {
       var msg = 'PWA|' + key + '|' + truncate(value);
-      uiLog('→ macro: ' + msg);
+      log('→ macro: ' + msg, 'step');
       await xapi.Command('UserInterface Extensions Widget SetValue', {
         WidgetId: BRIDGE_WIDGET,
         Value: msg,
       });
-      await delay(120);
+      await delay(150);
     }
 
-    function delay(ms) {
-      return new Promise(function (r) { setTimeout(r, ms); });
-    }
-
-    async function collectVariables() {
-      var vars = [];
-
-      vars.push(['location.href', location.href]);
-      vars.push(['location.origin', location.origin]);
-      vars.push(['location.pathname', location.pathname]);
-      vars.push(['location.search', location.search]);
-      vars.push(['location.hash', location.hash]);
-      vars.push(['document.referrer', document.referrer || '']);
-      vars.push(['navigator.userAgent', navigator.userAgent]);
-      vars.push(['navigator.language', navigator.language]);
+    function dumpBrowserVars() {
+      log('--- Variabili browser (sempre disponibili) ---', 'step');
+      log('location.href = ' + location.href);
+      log('location.search = ' + location.search);
+      log('location.hash = ' + location.hash);
+      log('navigator.userAgent = ' + navigator.userAgent);
+      log('typeof window.getXAPI = ' + typeof window.getXAPI);
+      log('typeof window.xapi = ' + typeof window.xapi);
 
       var qp = parseQuery();
-      for (var qk in qp) {
-        if (Object.prototype.hasOwnProperty.call(qp, qk)) {
-          vars.push(['query.' + qk, qp[qk]]);
+      for (var k in qp) {
+        if (Object.prototype.hasOwnProperty.call(qp, k)) {
+          log('query.' + k + ' = ' + qp[k]);
         }
       }
 
-      vars.push(['window.getXAPI', typeof window.getXAPI]);
-      vars.push(['window.xapi', typeof window.xapi]);
-
-      var winKeys = Object.getOwnPropertyNames(window).sort();
-      for (var i = 0; i < winKeys.length; i++) {
-        var k = winKeys[i];
-        if (/xapi|webex|cisco|ce|jsx|macro|bridge/i.test(k)) {
-          vars.push(['window.' + k, typeof window[k]]);
+      var names = Object.getOwnPropertyNames(window).sort();
+      var hits = 0;
+      for (var i = 0; i < names.length; i++) {
+        var name = names[i];
+        if (/xapi|webex|cisco|ce|jsx|macro|bridge|webkit/i.test(name)) {
+          log('window.' + name + ' = ' + typeof window[name]);
+          hits++;
         }
       }
-
-      return vars;
+      log('Proprietà window correlate: ' + hits, hits > 0 ? 'ok' : 'warn');
     }
 
-    async function collectXapiStatus(xapi) {
-      var out = [];
-      var paths = [
-        ['Config.UserInterface.HomeScreen.Peripherals.WebApp.URL', function () {
-          return xapi.Config.UserInterface.HomeScreen.Peripherals.WebApp.URL.get();
-        }],
-        ['Status.SystemUnit.TouchPanel.Mode', function () {
-          return xapi.Status.SystemUnit.TouchPanel.Mode.get();
-        }],
-        ['Status.SystemUnit.ProductId', function () {
-          return xapi.Status.SystemUnit.ProductId.get();
-        }],
-        ['Status.SystemUnit.Software.Version', function () {
-          return xapi.Status.SystemUnit.Software.Version.get();
-        }],
-        ['Status.Network[1].IPv4.Address', function () {
-          return xapi.Status.Network[1].IPv4.Address.get();
-        }],
-        ['Status.RoomAnalytics.PeopleCount.Current', function () {
-         
+    async function dumpViaXapi(xapi) {
+      log('--- Lettura xAPI (getXAPI OK) ---', 'ok');
+
+      try {
+        await xapi.Command('UserInterface Extensions Widget SetValue', {
+          WidgetId: BRIDGE_WIDGET,
+          Value: 'PWA_PROBE_START',
+        });
+      } catch (e) {
+        log('Bridge widget: ' + e.message, 'warn');
+      }
+
+      var browserPairs = [
+        ['location.href', location.href],
+        ['window.getXAPI', typeof window.getXAPI],
+      ];
+      for (var b = 0; b < browserPairs.length; b++) {
+        try {
+          await sendToMacro(xapi, browserPairs[b][0], browserPairs[b][1]);
+        } catch (e) {
+          log('Invio macro fallito: ' + e.message, 'warn');
+        }
+      }
+
+      var readers = [
+        ['TouchPanel.Mode', function () { return xapi.Status.SystemUnit.TouchPanel.Mode.get(); }],
+        ['ProductId', function () { return xapi.Status.SystemUnit.ProductId.get(); }],
+        ['Software.Version', function () { return xapi.Status.SystemUnit.Software.Version.get(); }],
+        ['LedControl.Mode', function () { return xapi.Config.UserInterface.LedControl.Mode.get(); }],
+      ];
+
+      for (var r = 0; r < readers.length; r++) {
+        try {
+          var val = await readers[r][1]();
+          log(readers[r][0] + ' = ' + safeStr(val));
+          await sendToMacro(xapi, readers[r][0], safeStr(val));
+        } catch (e) {
+          log(readers[r][0] + ' ERR: ' + e.message, 'warn');
+        }
+      }
+
+      try {
+        await xapi.Command('UserInterface Extensions Widget SetValue', {
+          WidgetId: BRIDGE_WIDGET,
+          Value: 'PWA_PROBE_END',
+        });
+        log('Fine invio a macro', 'ok');
+      } catch (e) {
+        log('PWA_PROBE_END: ' + e.message, 'warn');
+      }
+    }
+
+    async function run() {
+      log('Script avviato', 'step');
+      dumpBrowserVars();
+
+      log('Tentativo getXAPI (max 8 sec)...', 'step');
+      try {
+        var xapi = await getXapiWithTimeout(8000);
+        log('getXAPI() OK', 'ok');
+        await dumpViaXapi(xapi);
+      } catch (e) {
+        log('getXAPI fallito: ' + e.message, 'err');
+        log('Fix sul CODEC accoppiato:', 'warn');
+        log('  WebEngine Mode = On', 'warn');
+        log('  Security Xapi WebSocket ApiKey Allowed = True', 'warn');
+        log('  WebEngine AllowedHosts Hosts = dominio pagina (es. tuo.github.io)', 'warn');
+        log('  NetworkServices WebSocket = FollowHTTPService', 'warn');
+        log('  HTTP Mode = HTTP+HTTPS', 'warn');
+        log('Macro probe: controlla solo contesto codec', 'warn');
+      }
+
+      log('=== FINE PROBE ===', 'ok');
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () {
+        run().catch(function (e) {
+          log('CRASH: ' + e.message, 'err');
+        });
+      });
+    } else {
+      run().catch(function (e) {
+        log('CRASH: ' + e.message, 'err');
+      });
+    }
+  </script>
+</body>
+</html>
