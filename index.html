@@ -5,89 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chiama Antonio</title>
   <style>
-    * { box-sizing: border-box; }
     html, body {
       height: 100%;
       margin: 0;
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: system-ui, sans-serif;
       background: #0f172a;
-      color: #fff;
-    }
-    body {
       display: flex;
       align-items: center;
       justify-content: center;
     }
-    #callBtn {
+    a {
+      display: inline-block;
       font-size: 1.75rem;
       font-weight: 600;
       padding: 1.25rem 2.5rem;
-      border: none;
       border-radius: 16px;
       background: #148579;
       color: #fff;
-      cursor: pointer;
+      text-decoration: none;
       box-shadow: 0 8px 24px rgba(0,0,0,.35);
-    }
-    #callBtn:disabled {
-      opacity: 0.5;
-      cursor: wait;
-    }
-    #status {
-      position: fixed;
-      bottom: 1rem;
-      left: 0;
-      right: 0;
-      text-align: center;
-      font-size: 0.9rem;
-      opacity: 0.8;
     }
   </style>
 </head>
 <body>
-  <button id="callBtn" disabled>Chiama Antonio</button>
-  <div id="status">Connessione al codec...</div>
-
-  <script type="module">
-    // URI SIP da comporre — modifica con il tuo indirizzo reale
-    const SIP_URI = 'sip:antonio@tuouserver.it';
-
-    import { connect } from 'https://esm.sh/jsxapi@2.0.3/browser';
-
-    const statusEl = document.getElementById('status');
-    const btn = document.getElementById('callBtn');
-
-    function getCredentialsFromHash() {
-      const raw = location.hash.replace(/^#/, '');
-      if (!raw) throw new Error('Credenziali mancanti nell\'URL');
-      return JSON.parse(atob(raw));
-    }
-
-    let xapi;
-    try {
-      const { username, password, ipAddress } = getCredentialsFromHash();
-      xapi = connect(`wss://${ipAddress}`, { username, password });
-      statusEl.textContent = 'Pronto';
-      btn.disabled = false;
-    } catch (err) {
-      statusEl.textContent = 'Errore: ' + err.message;
-      console.error(err);
-    }
-
-    btn.addEventListener('click', async () => {
-      if (!xapi) return;
-      btn.disabled = true;
-      statusEl.textContent = 'Chiamata in corso...';
-      try {
-        await xapi.command('Dial', { Number: SIP_URI });
-        statusEl.textContent = 'Chiamata avviata';
-      } catch (err) {
-        statusEl.textContent = 'Errore: ' + (err.message || err);
-        console.error(err);
-      } finally {
-        btn.disabled = false;
-      }
-    });
-  </script>
+  <!-- Modifica con il tuo URI SIP reale -->
+  <a href="sip:anlombar@acecloud.webex.com">Chiama Antonio</a>
 </body>
 </html>
